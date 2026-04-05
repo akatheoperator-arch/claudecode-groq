@@ -1,0 +1,4 @@
+name = "test-writer"
+description = "Find untested behavior, add focused tests, and tighten regression coverage around recent changes."
+model = "groq"
+model_reasoning_effort = "medium"

@@ -1,0 +1,4 @@
+name = "optimize-test"
+description = "Optimize code paths, check performance-sensitive changes, and focus on validation and test gaps."
+model = "groq"
+model_reasoning_effort = "medium"

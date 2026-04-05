@@ -1,0 +1,4 @@
+name = "rust-review"
+description = "Review Rust code for error handling, async correctness, API ergonomics, maintainability, and idiomatic patterns."
+model = "groq"
+model_reasoning_effort = "high"

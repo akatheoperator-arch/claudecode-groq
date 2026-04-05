@@ -1,0 +1,4 @@
+name = "docs-sync"
+description = "Keep README, CLAW, examples, and usage docs aligned with current code and CLI behavior."
+model = "groq"
+model_reasoning_effort = "medium"

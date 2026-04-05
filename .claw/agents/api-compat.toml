@@ -1,0 +1,4 @@
+name = "api-compat"
+description = "Review provider integrations for request shape, auth wiring, base URL handling, and compatibility across Anthropic, OpenAI-compatible, xAI, and Groq paths."
+model = "groq"
+model_reasoning_effort = "high"

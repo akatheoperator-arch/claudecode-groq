@@ -603,7 +603,7 @@ pub fn suggest_slash_commands(input: &str, limit: usize) -> Vec<String> {
         })
         .collect::<Vec<_>>();
 
-    ranked.sort_by(|left, right| left.cmp(right));
+    ranked.sort();
     ranked.dedup_by(|left, right| left.2 == right.2);
     ranked
         .into_iter()
@@ -842,7 +842,7 @@ pub fn handle_branch_slash_command(
             Ok(if trimmed.is_empty() {
                 "Branch\n  Result           no branches found".to_string()
             } else {
-                format!("Branch\n  Result           listed\n\n{}", trimmed)
+                format!("Branch\n  Result           listed\n\n{trimmed}")
             })
         }
         Some("create") => {
@@ -882,7 +882,7 @@ pub fn handle_worktree_slash_command(
             Ok(if trimmed.is_empty() {
                 "Worktree\n  Result           no worktrees found".to_string()
             } else {
-                format!("Worktree\n  Result           listed\n\n{}", trimmed)
+                format!("Worktree\n  Result           listed\n\n{trimmed}")
             })
         }
         Some("add") => {
@@ -2349,6 +2349,56 @@ mod tests {
         assert!(report.contains("User (~/.codex):"));
         assert!(report.contains("(shadowed by Project (.codex)) planner · User planner"));
         assert!(report.contains("verifier · Verification agent · gpt-5.4-mini · high"));
+
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(user_home);
+    }
+
+    #[test]
+    fn lists_agents_from_project_claw_and_user_roots() {
+        let workspace = temp_dir("agents-workspace-claw");
+        let project_agents = workspace.join(".claw").join("agents");
+        let user_home = temp_dir("agents-home-claw");
+        let user_agents = user_home.join(".codex").join("agents");
+
+        write_agent(
+            &project_agents,
+            "security-audit",
+            "Project security review",
+            "groq",
+            "high",
+        );
+        write_agent(
+            &user_agents,
+            "security-audit",
+            "User security review",
+            "gpt-5.4-mini",
+            "medium",
+        );
+        write_agent(
+            &user_agents,
+            "docs-sync",
+            "User docs review",
+            "gpt-5.4-mini",
+            "medium",
+        );
+
+        let roots = vec![
+            (DefinitionSource::ProjectClaw, project_agents),
+            (DefinitionSource::UserCodex, user_agents),
+        ];
+        let report =
+            render_agents_report(&load_agents_from_roots(&roots).expect("agent roots should load"));
+
+        assert!(report.contains("Agents"));
+        assert!(report.contains("2 active agents"));
+        assert!(report.contains("Project (.claw):"));
+        assert!(report.contains("security-audit · Project security review · groq · high"));
+        assert!(report.contains("User (~/.codex):"));
+        assert!(
+            report.contains("(shadowed by Project (.claw)) security-audit · User security review")
+        );
+        assert!(report.contains("docs-sync · User docs review · gpt-5.4-mini · medium"));
 
         let _ = fs::remove_dir_all(workspace);
         let _ = fs::remove_dir_all(user_home);

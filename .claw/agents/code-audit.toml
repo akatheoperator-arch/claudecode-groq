@@ -1,0 +1,4 @@
+name = "code-audit"
+description = "Audit code for correctness, regressions, maintainability issues, and missing coverage."
+model = "groq"
+model_reasoning_effort = "high"

@@ -1,0 +1,4 @@
+name = "security-audit"
+description = "Review code for secrets exposure, unsafe patterns, input handling risks, and permission or auth issues."
+model = "groq"
+model_reasoning_effort = "high"
