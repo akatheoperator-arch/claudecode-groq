@@ -1,3 +1,13 @@
+#![allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::explicit_counter_loop,
+    clippy::match_same_arms,
+    clippy::single_match_else,
+    clippy::unnested_or_patterns,
+    clippy::unused_self
+)]
+
 use std::borrow::Cow;
 use std::io::{self, IsTerminal, Write};
 
