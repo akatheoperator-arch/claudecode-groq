@@ -196,6 +196,7 @@ async fn stream_message_normalizes_text_and_multiple_tool_calls() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn provider_client_dispatches_xai_requests_from_env() {
     let _lock = env_lock();
     let _api_key = ScopedEnvVar::set("XAI_API_KEY", "xai-test-key");
@@ -230,6 +231,90 @@ async fn provider_client_dispatches_xai_requests_from_env() {
         request.headers.get("authorization").map(String::as_str),
         Some("Bearer xai-test-key")
     );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn provider_client_dispatches_groq_requests_from_env() {
+    let _lock = env_lock();
+    let _api_key = ScopedEnvVar::set("GROQ_API_KEY", "groq-test-key");
+
+    let state = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+    let server = spawn_server(
+        state.clone(),
+        vec![http_response(
+            "200 OK",
+            "application/json",
+            "{\"id\":\"chatcmpl_provider_groq\",\"model\":\"llama-3.3-70b-versatile\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Through Groq provider client\",\"tool_calls\":[]},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6}}",
+        )],
+    )
+    .await;
+    let _base_url = ScopedEnvVar::set("GROQ_BASE_URL", server.base_url());
+
+    let client =
+        ProviderClient::from_model("groq").expect("Groq provider client should be constructed");
+    assert!(matches!(client, ProviderClient::Groq(_)));
+
+    let response = client
+        .send_message(&sample_groq_request(false))
+        .await
+        .expect("provider-dispatched request should succeed");
+
+    assert_eq!(response.total_tokens(), 14);
+
+    let captured = state.lock().await;
+    let request = captured.first().expect("captured request");
+    assert_eq!(request.path, "/chat/completions");
+    assert_eq!(
+        request.headers.get("authorization").map(String::as_str),
+        Some("Bearer groq-test-key")
+    );
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(body["model"], json!("llama-3.3-70b-versatile"));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn provider_client_dispatches_groq_slash_model_requests_even_with_openai_key_present() {
+    let _lock = env_lock();
+    let _openai_api_key = ScopedEnvVar::set("OPENAI_API_KEY", "openai-test-key");
+    let _groq_api_key = ScopedEnvVar::set("GROQ_API_KEY", "groq-test-key");
+
+    let state = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+    let server = spawn_server(
+        state.clone(),
+        vec![http_response(
+            "200 OK",
+            "application/json",
+            "{\"id\":\"chatcmpl_provider_groq_prefix\",\"model\":\"llama-3.1-8b-instant\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Through explicit Groq model prefix\",\"tool_calls\":[]},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":6,\"completion_tokens\":5}}",
+        )],
+    )
+    .await;
+    let _groq_base_url = ScopedEnvVar::set("GROQ_BASE_URL", server.base_url());
+
+    let client = ProviderClient::from_model("groq/llama-3.1-8b-instant")
+        .expect("explicit Groq prefix should force Groq routing");
+    assert!(matches!(client, ProviderClient::Groq(_)));
+
+    let response = client
+        .send_message(&sample_groq_request_for_model(
+            "llama-3.1-8b-instant",
+            false,
+        ))
+        .await
+        .expect("provider-dispatched request should succeed");
+
+    assert_eq!(response.total_tokens(), 11);
+
+    let captured = state.lock().await;
+    let request = captured.first().expect("captured request");
+    assert_eq!(request.path, "/chat/completions");
+    assert_eq!(
+        request.headers.get("authorization").map(String::as_str),
+        Some("Bearer groq-test-key")
+    );
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(body["model"], json!("llama-3.1-8b-instant"));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,11 +470,40 @@ fn sample_request(stream: bool) -> MessageRequest {
     }
 }
 
+fn sample_groq_request(stream: bool) -> MessageRequest {
+    sample_groq_request_for_model("llama-3.3-70b-versatile", stream)
+}
+
+fn sample_groq_request_for_model(model: &str, stream: bool) -> MessageRequest {
+    MessageRequest {
+        model: model.to_string(),
+        max_tokens: 64,
+        messages: vec![InputMessage {
+            role: "user".to_string(),
+            content: vec![InputContentBlock::Text {
+                text: "Say hello".to_string(),
+            }],
+        }],
+        system: Some("Use tools when needed".to_string()),
+        tools: Some(vec![ToolDefinition {
+            name: "weather".to_string(),
+            description: Some("Fetches weather".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"]
+            }),
+        }]),
+        tool_choice: Some(ToolChoice::Auto),
+        stream,
+    }
+}
+
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| StdMutex::new(()))
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct ScopedEnvVar {

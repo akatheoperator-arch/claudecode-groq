@@ -22,6 +22,7 @@ async fn stream_via_provider<P: Provider>(
 pub enum ProviderClient {
     ClawApi(ClawApiClient),
     Xai(OpenAiCompatClient),
+    Groq(OpenAiCompatClient),
     OpenAi(OpenAiCompatClient),
 }
 
@@ -34,14 +35,30 @@ impl ProviderClient {
         model: &str,
         default_auth: Option<AuthSource>,
     ) -> Result<Self, ApiError> {
+        if model.trim().eq_ignore_ascii_case("groq/") {
+            return Err(ApiError::InvalidModel(
+                "the `groq/` prefix requires a non-empty model name".to_string(),
+            ));
+        }
+
+        let provider_kind = providers::detect_provider_kind(model);
         let resolved_model = providers::resolve_model_alias(model);
-        match providers::detect_provider_kind(&resolved_model) {
+        if resolved_model.trim().is_empty() {
+            return Err(ApiError::InvalidModel(
+                "model name cannot be empty".to_string(),
+            ));
+        }
+
+        match provider_kind {
             ProviderKind::ClawApi => Ok(Self::ClawApi(match default_auth {
                 Some(auth) => ClawApiClient::from_auth(auth),
                 None => ClawApiClient::from_env()?,
             })),
             ProviderKind::Xai => Ok(Self::Xai(OpenAiCompatClient::from_env(
                 OpenAiCompatConfig::xai(),
+            )?)),
+            ProviderKind::Groq => Ok(Self::Groq(OpenAiCompatClient::from_env(
+                OpenAiCompatConfig::groq(),
             )?)),
             ProviderKind::OpenAi => Ok(Self::OpenAi(OpenAiCompatClient::from_env(
                 OpenAiCompatConfig::openai(),
@@ -54,6 +71,7 @@ impl ProviderClient {
         match self {
             Self::ClawApi(_) => ProviderKind::ClawApi,
             Self::Xai(_) => ProviderKind::Xai,
+            Self::Groq(_) => ProviderKind::Groq,
             Self::OpenAi(_) => ProviderKind::OpenAi,
         }
     }
@@ -64,7 +82,9 @@ impl ProviderClient {
     ) -> Result<MessageResponse, ApiError> {
         match self {
             Self::ClawApi(client) => send_via_provider(client, request).await,
-            Self::Xai(client) | Self::OpenAi(client) => send_via_provider(client, request).await,
+            Self::Xai(client) | Self::Groq(client) | Self::OpenAi(client) => {
+                send_via_provider(client, request).await
+            }
         }
     }
 
@@ -76,9 +96,11 @@ impl ProviderClient {
             Self::ClawApi(client) => stream_via_provider(client, request)
                 .await
                 .map(MessageStream::ClawApi),
-            Self::Xai(client) | Self::OpenAi(client) => stream_via_provider(client, request)
-                .await
-                .map(MessageStream::OpenAiCompat),
+            Self::Xai(client) | Self::Groq(client) | Self::OpenAi(client) => {
+                stream_via_provider(client, request)
+                    .await
+                    .map(MessageStream::OpenAiCompat)
+            }
         }
     }
 }
@@ -119,23 +141,42 @@ pub fn read_xai_base_url() -> String {
     openai_compat::read_base_url(OpenAiCompatConfig::xai())
 }
 
+#[must_use]
+pub fn read_groq_base_url() -> String {
+    openai_compat::read_base_url(OpenAiCompatConfig::groq())
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::error::ApiError;
     use crate::providers::{detect_provider_kind, resolve_model_alias, ProviderKind};
+    use crate::ProviderClient;
 
     #[test]
     fn resolves_existing_and_grok_aliases() {
         assert_eq!(resolve_model_alias("opus"), "claude-opus-4-6");
         assert_eq!(resolve_model_alias("grok"), "grok-3");
         assert_eq!(resolve_model_alias("grok-mini"), "grok-3-mini");
+        assert_eq!(resolve_model_alias("groq"), "llama-3.3-70b-versatile");
     }
 
     #[test]
     fn provider_detection_prefers_model_family() {
         assert_eq!(detect_provider_kind("grok-3"), ProviderKind::Xai);
         assert_eq!(
+            detect_provider_kind("llama-3.3-70b-versatile"),
+            ProviderKind::Groq
+        );
+        assert_eq!(
             detect_provider_kind("claude-sonnet-4-6"),
             ProviderKind::ClawApi
         );
+    }
+
+    #[test]
+    fn rejects_empty_groq_prefix_model() {
+        let error = ProviderClient::from_model("groq/")
+            .expect_err("empty explicit Groq model should fail fast");
+        assert!(matches!(error, ApiError::InvalidModel(_)));
     }
 }

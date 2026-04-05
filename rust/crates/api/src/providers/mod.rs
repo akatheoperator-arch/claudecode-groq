@@ -27,6 +27,7 @@ pub trait Provider {
 pub enum ProviderKind {
     ClawApi,
     Xai,
+    Groq,
     OpenAi,
 }
 
@@ -138,12 +139,60 @@ const MODEL_REGISTRY: &[(&str, ProviderMetadata)] = &[
             default_base_url: openai_compat::DEFAULT_XAI_BASE_URL,
         },
     ),
+    (
+        "groq",
+        ProviderMetadata {
+            provider: ProviderKind::Groq,
+            auth_env: "GROQ_API_KEY",
+            base_url_env: "GROQ_BASE_URL",
+            default_base_url: openai_compat::DEFAULT_GROQ_BASE_URL,
+        },
+    ),
+    (
+        "llama-3.3-70b-versatile",
+        ProviderMetadata {
+            provider: ProviderKind::Groq,
+            auth_env: "GROQ_API_KEY",
+            base_url_env: "GROQ_BASE_URL",
+            default_base_url: openai_compat::DEFAULT_GROQ_BASE_URL,
+        },
+    ),
+    (
+        "llama-3.1-8b-instant",
+        ProviderMetadata {
+            provider: ProviderKind::Groq,
+            auth_env: "GROQ_API_KEY",
+            base_url_env: "GROQ_BASE_URL",
+            default_base_url: openai_compat::DEFAULT_GROQ_BASE_URL,
+        },
+    ),
 ];
+
+const fn groq_metadata() -> ProviderMetadata {
+    ProviderMetadata {
+        provider: ProviderKind::Groq,
+        auth_env: "GROQ_API_KEY",
+        base_url_env: "GROQ_BASE_URL",
+        default_base_url: openai_compat::DEFAULT_GROQ_BASE_URL,
+    }
+}
+
+#[must_use]
+pub fn explicit_provider_kind(model: &str) -> Option<ProviderKind> {
+    let lower = model.trim().to_ascii_lowercase();
+    if lower.starts_with("groq/") {
+        return Some(ProviderKind::Groq);
+    }
+    None
+}
 
 #[must_use]
 pub fn resolve_model_alias(model: &str) -> String {
     let trimmed = model.trim();
     let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("groq/") {
+        return trimmed[5..].to_string();
+    }
     MODEL_REGISTRY
         .iter()
         .find_map(|(alias, metadata)| {
@@ -160,6 +209,10 @@ pub fn resolve_model_alias(model: &str) -> String {
                     "grok-2" => "grok-2",
                     _ => trimmed,
                 },
+                ProviderKind::Groq => match *alias {
+                    "groq" => "llama-3.3-70b-versatile",
+                    _ => trimmed,
+                },
                 ProviderKind::OpenAi => trimmed,
             })
         })
@@ -168,12 +221,20 @@ pub fn resolve_model_alias(model: &str) -> String {
 
 #[must_use]
 pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
+    let lower = model.trim().to_ascii_lowercase();
+    if lower.starts_with("groq/") {
+        return Some(groq_metadata());
+    }
+
     let canonical = resolve_model_alias(model);
-    let lower = canonical.to_ascii_lowercase();
-    if let Some((_, metadata)) = MODEL_REGISTRY.iter().find(|(alias, _)| *alias == lower) {
+    let canonical_lower = canonical.to_ascii_lowercase();
+    if let Some((_, metadata)) = MODEL_REGISTRY
+        .iter()
+        .find(|(alias, _)| *alias == canonical_lower)
+    {
         return Some(*metadata);
     }
-    if lower.starts_with("grok") {
+    if canonical_lower.starts_with("grok") {
         return Some(ProviderMetadata {
             provider: ProviderKind::Xai,
             auth_env: "XAI_API_KEY",
@@ -186,6 +247,9 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
 
 #[must_use]
 pub fn detect_provider_kind(model: &str) -> ProviderKind {
+    if let Some(provider) = explicit_provider_kind(model) {
+        return provider;
+    }
     if let Some(metadata) = metadata_for_model(model) {
         return metadata.provider;
     }
@@ -197,6 +261,9 @@ pub fn detect_provider_kind(model: &str) -> ProviderKind {
     }
     if openai_compat::has_api_key("XAI_API_KEY") {
         return ProviderKind::Xai;
+    }
+    if openai_compat::has_api_key("GROQ_API_KEY") {
+        return ProviderKind::Groq;
     }
     ProviderKind::ClawApi
 }
@@ -213,21 +280,48 @@ pub fn max_tokens_for_model(model: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderKind};
+    use super::{
+        detect_provider_kind, explicit_provider_kind, max_tokens_for_model, metadata_for_model,
+        resolve_model_alias, ProviderKind,
+    };
 
     #[test]
     fn resolves_grok_aliases() {
         assert_eq!(resolve_model_alias("grok"), "grok-3");
         assert_eq!(resolve_model_alias("grok-mini"), "grok-3-mini");
         assert_eq!(resolve_model_alias("grok-2"), "grok-2");
+        assert_eq!(resolve_model_alias("groq"), "llama-3.3-70b-versatile");
+        assert_eq!(
+            resolve_model_alias("groq/llama-3.3-70b-versatile"),
+            "llama-3.3-70b-versatile"
+        );
     }
 
     #[test]
     fn detects_provider_from_model_name_first() {
         assert_eq!(detect_provider_kind("grok"), ProviderKind::Xai);
+        assert_eq!(detect_provider_kind("groq"), ProviderKind::Groq);
+        assert_eq!(
+            detect_provider_kind("groq/llama-3.1-8b-instant"),
+            ProviderKind::Groq
+        );
         assert_eq!(
             detect_provider_kind("claude-sonnet-4-6"),
             ProviderKind::ClawApi
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_groq_provider_prefix() {
+        assert_eq!(
+            explicit_provider_kind("groq/custom-model"),
+            Some(ProviderKind::Groq)
+        );
+        assert_eq!(
+            metadata_for_model("groq/custom-model")
+                .expect("explicit Groq prefix should be recognized")
+                .provider,
+            ProviderKind::Groq
         );
     }
 

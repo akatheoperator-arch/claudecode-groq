@@ -16,6 +16,7 @@ use super::{Provider, ProviderFuture};
 
 pub const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+pub const DEFAULT_GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 const REQUEST_ID_HEADER: &str = "request-id";
 const ALT_REQUEST_ID_HEADER: &str = "x-request-id";
 const DEFAULT_INITIAL_BACKOFF: Duration = Duration::from_millis(200);
@@ -32,6 +33,7 @@ pub struct OpenAiCompatConfig {
 
 const XAI_ENV_VARS: &[&str] = &["XAI_API_KEY"];
 const OPENAI_ENV_VARS: &[&str] = &["OPENAI_API_KEY"];
+const GROQ_ENV_VARS: &[&str] = &["GROQ_API_KEY"];
 
 impl OpenAiCompatConfig {
     #[must_use]
@@ -53,11 +55,23 @@ impl OpenAiCompatConfig {
             default_base_url: DEFAULT_OPENAI_BASE_URL,
         }
     }
+
+    #[must_use]
+    pub const fn groq() -> Self {
+        Self {
+            provider_name: "Groq",
+            api_key_env: "GROQ_API_KEY",
+            base_url_env: "GROQ_BASE_URL",
+            default_base_url: DEFAULT_GROQ_BASE_URL,
+        }
+    }
+
     #[must_use]
     pub fn credential_env_vars(self) -> &'static [&'static str] {
         match self.provider_name {
             "xAI" => XAI_ENV_VARS,
             "OpenAI" => OPENAI_ENV_VARS,
+            "Groq" => GROQ_ENV_VARS,
             _ => &[],
         }
     }
@@ -251,7 +265,7 @@ impl MessageStream {
             }
 
             if self.done {
-                self.pending.extend(self.state.finish()?);
+                self.pending.extend(self.state.finish());
                 if let Some(event) = self.pending.pop_front() {
                     return Ok(Some(event));
                 }
@@ -261,7 +275,7 @@ impl MessageStream {
             match self.response.chunk().await? {
                 Some(chunk) => {
                     for parsed in self.parser.push(&chunk)? {
-                        self.pending.extend(self.state.ingest_chunk(parsed)?);
+                        self.pending.extend(self.state.ingest_chunk(parsed));
                     }
                 }
                 None => {
@@ -299,33 +313,50 @@ impl OpenAiSseParser {
 #[derive(Debug)]
 struct StreamState {
     model: String,
-    message_started: bool,
-    text_started: bool,
-    text_finished: bool,
-    finished: bool,
+    message_state: MessageState,
+    text_state: TextState,
+    stream_status: StreamStatus,
     stop_reason: Option<String>,
     usage: Option<Usage>,
     tool_calls: BTreeMap<u32, ToolCallState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageState {
+    Pending,
+    Started,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextState {
+    Absent,
+    Started,
+    Finished,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamStatus {
+    Open,
+    Finished,
 }
 
 impl StreamState {
     fn new(model: String) -> Self {
         Self {
             model,
-            message_started: false,
-            text_started: false,
-            text_finished: false,
-            finished: false,
+            message_state: MessageState::Pending,
+            text_state: TextState::Absent,
+            stream_status: StreamStatus::Open,
             stop_reason: None,
             usage: None,
             tool_calls: BTreeMap::new(),
         }
     }
 
-    fn ingest_chunk(&mut self, chunk: ChatCompletionChunk) -> Result<Vec<StreamEvent>, ApiError> {
+    fn ingest_chunk(&mut self, chunk: ChatCompletionChunk) -> Vec<StreamEvent> {
         let mut events = Vec::new();
-        if !self.message_started {
-            self.message_started = true;
+        if self.message_state == MessageState::Pending {
+            self.message_state = MessageState::Started;
             events.push(StreamEvent::MessageStart(MessageStartEvent {
                 message: MessageResponse {
                     id: chunk.id.clone(),
@@ -357,8 +388,8 @@ impl StreamState {
 
         for choice in chunk.choices {
             if let Some(content) = choice.delta.content.filter(|value| !value.is_empty()) {
-                if !self.text_started {
-                    self.text_started = true;
+                if self.text_state == TextState::Absent {
+                    self.text_state = TextState::Started;
                     events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
                         index: 0,
                         content_block: OutputContentBlock::Text {
@@ -377,7 +408,7 @@ impl StreamState {
                 state.apply(tool_call);
                 let block_index = state.block_index();
                 if !state.started {
-                    if let Some(start_event) = state.start_event()? {
+                    if let Some(start_event) = state.start_event() {
                         state.started = true;
                         events.push(StreamEvent::ContentBlockStart(start_event));
                     } else {
@@ -410,18 +441,18 @@ impl StreamState {
             }
         }
 
-        Ok(events)
+        events
     }
 
-    fn finish(&mut self) -> Result<Vec<StreamEvent>, ApiError> {
-        if self.finished {
-            return Ok(Vec::new());
+    fn finish(&mut self) -> Vec<StreamEvent> {
+        if self.stream_status == StreamStatus::Finished {
+            return Vec::new();
         }
-        self.finished = true;
+        self.stream_status = StreamStatus::Finished;
 
         let mut events = Vec::new();
-        if self.text_started && !self.text_finished {
-            self.text_finished = true;
+        if self.text_state == TextState::Started {
+            self.text_state = TextState::Finished;
             events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
                 index: 0,
             }));
@@ -429,7 +460,7 @@ impl StreamState {
 
         for state in self.tool_calls.values_mut() {
             if !state.started {
-                if let Some(start_event) = state.start_event()? {
+                if let Some(start_event) = state.start_event() {
                     state.started = true;
                     events.push(StreamEvent::ContentBlockStart(start_event));
                     if let Some(delta_event) = state.delta_event() {
@@ -445,7 +476,7 @@ impl StreamState {
             }
         }
 
-        if self.message_started {
+        if self.message_state == MessageState::Started {
             events.push(StreamEvent::MessageDelta(MessageDeltaEvent {
                 delta: MessageDelta {
                     stop_reason: Some(
@@ -464,7 +495,7 @@ impl StreamState {
             }));
             events.push(StreamEvent::MessageStop(MessageStopEvent {}));
         }
-        Ok(events)
+        events
     }
 }
 
@@ -497,22 +528,20 @@ impl ToolCallState {
         self.openai_index + 1
     }
 
-    fn start_event(&self) -> Result<Option<ContentBlockStartEvent>, ApiError> {
-        let Some(name) = self.name.clone() else {
-            return Ok(None);
-        };
+    fn start_event(&self) -> Option<ContentBlockStartEvent> {
+        let name = self.name.clone()?;
         let id = self
             .id
             .clone()
             .unwrap_or_else(|| format!("tool_call_{}", self.openai_index));
-        Ok(Some(ContentBlockStartEvent {
+        Some(ContentBlockStartEvent {
             index: self.block_index(),
             content_block: OutputContentBlock::ToolUse {
                 id,
                 name,
                 input: json!({}),
             },
-        }))
+        })
     }
 
     fn delta_event(&mut self) -> Option<ContentBlockDeltaEvent> {
@@ -1014,6 +1043,21 @@ mod tests {
             error,
             ApiError::MissingCredentials {
                 provider: "xAI",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn missing_groq_api_key_is_provider_specific() {
+        let _lock = env_lock();
+        std::env::remove_var("GROQ_API_KEY");
+        let error = OpenAiCompatClient::from_env(OpenAiCompatConfig::groq())
+            .expect_err("missing key should error");
+        assert!(matches!(
+            error,
+            ApiError::MissingCredentials {
+                provider: "Groq",
                 ..
             }
         ));
