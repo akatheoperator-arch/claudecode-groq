@@ -21,31 +21,7 @@ mod tests {
 
     use crate::{LspManager, LspServerConfig};
 
-    fn temp_dir(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("lsp-{label}-{nanos}"))
-    }
-
-    fn python3_path() -> Option<String> {
-        let candidates = ["python3", "/usr/bin/python3"];
-        candidates.iter().find_map(|candidate| {
-            Command::new(candidate)
-                .arg("--version")
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|_| (*candidate).to_string())
-        })
-    }
-
-    fn write_mock_server_script(root: &std::path::Path) -> PathBuf {
-        let script_path = root.join("mock_lsp_server.py");
-        fs::write(
-            &script_path,
-            r#"import json
+    const MOCK_SERVER_SCRIPT: &str = r#"import json
 import sys
 
 
@@ -156,9 +132,31 @@ while True:
         write_message({"jsonrpc": "2.0", "id": message["id"], "result": None})
     elif method == "exit":
         break
-"#,
-        )
-        .expect("mock server should be written");
+"#;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("lsp-{label}-{nanos}"))
+    }
+
+    fn python3_path() -> Option<String> {
+        let candidates = ["python3", "/usr/bin/python3"];
+        candidates.iter().find_map(|candidate| {
+            Command::new(candidate)
+                .arg("--version")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|_| (*candidate).to_string())
+        })
+    }
+
+    fn write_mock_server_script(root: &std::path::Path) -> PathBuf {
+        let script_path = root.join("mock_lsp_server.py");
+        fs::write(&script_path, MOCK_SERVER_SCRIPT).expect("mock server should be written");
         script_path
     }
 
@@ -192,7 +190,8 @@ while True:
         fs::create_dir_all(root.join("src")).expect("workspace root should exist");
         let script_path = write_mock_server_script(&root);
         let source_path = root.join("src").join("main.rs");
-        fs::write(&source_path, "fn main() {}\nlet value = 1;\n").expect("source file should exist");
+        fs::write(&source_path, "fn main() {}\nlet value = 1;\n")
+            .expect("source file should exist");
         let manager = LspManager::new(vec![LspServerConfig {
             name: "rust-analyzer".to_string(),
             command: python,
@@ -204,7 +203,10 @@ while True:
         }])
         .expect("manager should build");
         manager
-            .open_document(&source_path, &fs::read_to_string(&source_path).expect("source read should succeed"))
+            .open_document(
+                &source_path,
+                &fs::read_to_string(&source_path).expect("source read should succeed"),
+            )
             .await
             .expect("document should open");
         wait_for_diagnostics(&manager).await;
@@ -226,7 +228,10 @@ while True:
         // then
         assert_eq!(diagnostics.files.len(), 1);
         assert_eq!(diagnostics.total_diagnostics(), 1);
-        assert_eq!(diagnostics.files[0].diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            diagnostics.files[0].diagnostics[0].severity,
+            Some(DiagnosticSeverity::ERROR)
+        );
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].start_line(), 1);
         assert_eq!(references.len(), 2);
@@ -246,7 +251,8 @@ while True:
         fs::create_dir_all(root.join("src")).expect("workspace root should exist");
         let script_path = write_mock_server_script(&root);
         let source_path = root.join("src").join("lib.rs");
-        fs::write(&source_path, "pub fn answer() -> i32 { 42 }\n").expect("source file should exist");
+        fs::write(&source_path, "pub fn answer() -> i32 { 42 }\n")
+            .expect("source file should exist");
         let manager = LspManager::new(vec![LspServerConfig {
             name: "rust-analyzer".to_string(),
             command: python,
@@ -258,7 +264,10 @@ while True:
         }])
         .expect("manager should build");
         manager
-            .open_document(&source_path, &fs::read_to_string(&source_path).expect("source read should succeed"))
+            .open_document(
+                &source_path,
+                &fs::read_to_string(&source_path).expect("source read should succeed"),
+            )
             .await
             .expect("document should open");
         wait_for_diagnostics(&manager).await;
