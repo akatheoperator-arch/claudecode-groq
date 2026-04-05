@@ -2,7 +2,7 @@
 
 **A high-performance, open-source AI coding agent written in Rust.**
 
-ClaudeCode is a terminal-native CLI agent designed to bring advanced LLM capabilities directly into your development workflow. Built for speed, safety, and efficiency, it provides an interactive agent shell, workspace-aware tools, and persistent session management. It is an independent open-source implementation inspired by Claude Code, not the official Anthropic product.
+ClaudeCode is a terminal-native CLI agent designed to bring advanced LLM capabilities directly into your development workflow. Built for speed, safety, and efficiency, it provides an interactive agent shell, workspace-aware tools, and persistent session management. This fork exists because I want to use Groq fast inference while keeping the same CLI workflow. It is an independent open-source implementation inspired by Claude Code, not the official Anthropic product.
 
 ![View Count](https://komarev.com/ghpvc/?username=soongenwong&label=Total+views&color=ffa500&style=for-the-badge)
 
@@ -26,7 +26,7 @@ ClaudeCode is a terminal-native CLI agent designed to bring advanced LLM capabil
 
 - **Rust-powered:** Built with Rust for memory safety, minimal binary size, and high execution speed.
 - **Agentic CLI:** Interactive shell and one-shot prompt support for seamless terminal workflows.
-- **Model flexible:** Supports Anthropic-compatible and OpenAI-compatible providers, plus xAI/Grok aliases.
+- **Model flexible:** Supports Anthropic-compatible and OpenAI-compatible providers, plus Groq and xAI/Grok aliases.
 - **Workspace aware:** Context-aware tools designed to understand your local codebase.
 - **Session persistence:** Resumeable sessions via JSON state management.
 - **Extensible:** Plugin-ready architecture for custom tools and skills.
@@ -71,6 +71,7 @@ claw --resume session.json /status
 ```
 
 Run `claw --help` for the full command list, including agents, skills, and system-prompt flows.
+Project-local agents can be defined in `.claw/agents` or `.codex/agents`.
 
 ## Authentication
 
@@ -90,11 +91,27 @@ export OPENAI_API_KEY="..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
+### Groq
+
+```bash
+export GROQ_API_KEY="..."
+export GROQ_BASE_URL="https://api.groq.com/openai/v1"
+```
+
+Groq model usage examples:
+
+```bash
+claw --model groq
+claw --model groq/llama-3.1-8b-instant
+```
+
+If you prefer local env files for development, use `.env.example` as a template and keep real secrets only in your ignored local `.env`.
+
 ### Grok / xAI
 
 ```bash
 export XAI_API_KEY="..."
-export XAI_BASE_URL="https://api.x.ai"
+export XAI_BASE_URL="https://api.x.ai/v1"
 ```
 
 You can also authenticate via the CLI:

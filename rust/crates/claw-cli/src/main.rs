@@ -42,6 +42,21 @@ use serde_json::json;
 use tools::GlobalToolRegistry;
 
 const DEFAULT_MODEL: &str = "claude-opus-4-6";
+const GROQ_FREE_PLAN_DOC_DATE: &str = "2026-04-05";
+const GROQ_FREE_PLAN_TEXT_MODELS: &[&str] = &[
+    "groq (alias -> llama-3.3-70b-versatile)",
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "moonshotai/kimi-k2-instruct",
+    "moonshotai/kimi-k2-instruct-0905",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3-32b",
+    "groq/compound",
+    "groq/compound-mini",
+];
+
 fn max_tokens_for_model(model: &str) -> u32 {
     if model.contains("opus") {
         32_000
@@ -367,6 +382,7 @@ fn resolve_model_alias(model: &str) -> &str {
         "opus" => "claude-opus-4-6",
         "sonnet" => "claude-sonnet-4-6",
         "haiku" => "claude-haiku-4-5-20251213",
+        "groq" => "llama-3.3-70b-versatile",
         _ => model,
     }
 }
@@ -698,6 +714,12 @@ struct StatusUsage {
 }
 
 fn format_model_report(model: &str, message_count: usize, turns: u32) -> String {
+    let groq_models = GROQ_FREE_PLAN_TEXT_MODELS
+        .iter()
+        .map(|model_name| format!("  {model_name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     format!(
         "Model
   Current          {model}
@@ -707,10 +729,18 @@ Aliases
   opus             claude-opus-4-6
   sonnet           claude-sonnet-4-6
   haiku            claude-haiku-4-5-20251213
+  groq             llama-3.3-70b-versatile
+
+Groq Free Plan
+  Source           https://console.groq.com/docs/rate-limits
+  Verified         {GROQ_FREE_PLAN_DOC_DATE}
+  Scope            Text and agent-usable models
+{groq_models}
 
 Next
   /model           Show the current model
-  /model <name>    Switch models for this REPL session"
+  /model <name>    Switch models for this REPL session
+  Example          /model llama-3.1-8b-instant"
     )
 }
 
@@ -1237,6 +1267,7 @@ impl LiveCli {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_repl_command(
         &mut self,
         command: SlashCommand,
@@ -2988,7 +3019,7 @@ fn build_runtime(
         CliToolExecutor::new(allowed_tools.clone(), emit_output, tool_registry.clone()),
         permission_policy(permission_mode, &tool_registry),
         system_prompt,
-        feature_config,
+        &feature_config,
     ))
 }
 
@@ -3956,6 +3987,7 @@ fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {
         .collect()
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "Claw Code CLI v{VERSION}")?;
     writeln!(
@@ -4228,6 +4260,7 @@ mod tests {
         assert_eq!(resolve_model_alias("opus"), "claude-opus-4-6");
         assert_eq!(resolve_model_alias("sonnet"), "claude-sonnet-4-6");
         assert_eq!(resolve_model_alias("haiku"), "claude-haiku-4-5-20251213");
+        assert_eq!(resolve_model_alias("groq"), "llama-3.3-70b-versatile");
         assert_eq!(resolve_model_alias("custom-opus"), "custom-opus");
     }
 
@@ -4571,6 +4604,9 @@ mod tests {
         assert!(report.contains("Current          sonnet"));
         assert!(report.contains("Session          12 messages · 4 turns"));
         assert!(report.contains("Aliases"));
+        assert!(report.contains("Groq Free Plan"));
+        assert!(report.contains("llama-3.1-8b-instant"));
+        assert!(report.contains("groq/compound-mini"));
         assert!(report.contains("/model <name>    Switch models for this REPL session"));
     }
 
